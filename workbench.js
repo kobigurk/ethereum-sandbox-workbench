@@ -261,4 +261,17 @@ Workbench.prototype.call = function (options) {
   });
 };
 
+Workbench.prototype.fastForward = function (blocks, finalTimestamp) {
+  var self = this;
+  return new Promise((resolve, reject) => {
+    return self.sandbox.web3.sandbox.fastForward({
+      blocks: self.sandbox.web3.toHex(blocks),
+      finalTimestamp: self.sandbox.web3.toHex(finalTimestamp)
+    }, function (err) {
+      if (err) return reject(err);
+      return resolve();
+    });
+  });
+};
+
 module.exports = Workbench;
