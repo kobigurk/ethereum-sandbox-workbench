@@ -15,11 +15,60 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+var Module = require('module');
+var vm = require('vm');
+Promise.prototype['originalThen'] = Promise.prototype.then;
+Promise.prototype['then'] = function() {
+  var resultCheckerFunc = function(result) {
+    if (typeof result === 'undefined')
+      console.log("WARNING: result from promise was undefined");
+    return result;
+  };
+  if (typeof arguments[1] === 'function') {
+    return this.originalThen(arguments[0], arguments[1]);
+  } else {
+    return this.originalThen(arguments[0])
+    .originalThen(resultCheckerFunc);
+  }
+};
+var Pudding = require('ether-pudding');
+var requireFromSourceInject =  function(source, filename) {
+  // Modified from here: https://gist.github.com/anatoliychakkaev/1599423
+  // Allows us to require asynchronously while allowing specific dependencies.
+  var m = new Module(filename);
+
+  // Provide all the globals listed here: https://nodejs.org/api/globals.html
+  var context = {
+    Buffer: Buffer,
+    __dirname: path.dirname(filename),
+    __filename: filename,
+    clearImmediate: clearImmediate,
+    clearInterval: clearInterval,
+    clearTimeout: clearTimeout,
+    Promise: Promise,
+    console: console,
+    exports: exports,
+    global: global,
+    module: m,
+    process: process,
+    require: require,
+    setImmediate: setImmediate,
+    setInterval: setInterval,
+    setTimeout: setTimeout,
+  };
+
+  var script = vm.createScript(source, filename);
+  script.runInNewContext(context);
+
+  return m.exports;
+};
+
+Pudding._requireFromSource = requireFromSourceInject;
+
 var path = require('path');
 var fs = require('fs');
 
 var callsite = require('callsite');
-var Pudding = require('ether-pudding');
 var Sandbox = require('ethereum-sandbox-client');
 var helper = require('ethereum-sandbox-helper');
 var SolidityFunction = require("web3/lib/web3/function.js");
@@ -106,6 +155,33 @@ Workbench.prototype.start = function(contracts, cb) {
 
 Workbench.prototype.stop = function(cb) {
   this.sandbox.stop(cb);
+};
+
+function makeCallsSync(contract) {
+  var self = this;
+  contract.originalNew = contract.new;
+  contract.new = function() {
+    return this.originalNew(arguments)
+    .then(function(contractToPatch) {
+      contractToPatch.web3Contract = self.sandbox.web3.eth.contract(contractToPatch.abi).at(contractToPatch.address);
+      contractToPatch.abi.forEach(obj => {
+        if (obj.constant) {
+          var callFunc = function() {
+            var options = {};
+            Object.assign(options, self.defaults);
+            var args = arguments;
+            args[Object.keys(args).length] = options;
+            return contractToPatch.web3Contract[obj.name].call.apply(null, args);
+          };
+          var newFunc = callFunc;
+          Object.assign(newFunc, contractToPatch[obj.name]);
+          newFunc.call = callFunc;
+          contractToPatch[obj.name] = newFunc;
+        }
+      });
+      return contractToPatch;
+    });
+  };
 };
 
 function setupMockOnContract(contract) {
@@ -200,6 +276,7 @@ Workbench.prototype.startTesting = function(contracts, cb) {
   Object.keys(this.readyContracts).forEach(contractName => {
     var contract = this.readyContracts[contractName];
     setupMockOnContract.bind(this)(contract);
+    makeCallsSync.bind(this)(contract);
   });
 
   var name = '[' + contracts.join(', ') + '] Contracts Testing';
