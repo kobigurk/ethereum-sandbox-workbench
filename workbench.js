@@ -161,11 +161,11 @@ function makeCallsSync(contract) {
   var self = this;
   contract.originalNew = contract.new;
   contract.new = function() {
-    return this.originalNew(arguments)
+    return this.originalNew.apply(this, arguments)
     .then(function(contractToPatch) {
       contractToPatch.web3Contract = self.sandbox.web3.eth.contract(contractToPatch.abi).at(contractToPatch.address);
       contractToPatch.abi.forEach(obj => {
-        if (obj.constant) {
+        if (obj.type === 'function') {
           var callFunc = function() {
             var options = {};
             Object.assign(options, self.defaults);
@@ -173,8 +173,13 @@ function makeCallsSync(contract) {
             args[Object.keys(args).length] = options;
             return contractToPatch.web3Contract[obj.name].call.apply(null, args);
           };
-          var newFunc = callFunc;
-          Object.assign(newFunc, contractToPatch[obj.name]);
+          var newFunc;
+          if (obj.constant) {
+            newFunc = callFunc; 
+            Object.assign(newFunc, contractToPatch[obj.name]);
+          } else {
+            newFunc = contractToPatch[obj.name];
+          }
           newFunc.call = callFunc;
           contractToPatch[obj.name] = newFunc;
         }
@@ -187,7 +192,7 @@ function makeCallsSync(contract) {
 function setupMockOnContract(contract) {
   var self = this;
   contract.newMock = function(options) {
-    return self.readyContracts[proxyContractName].new((options && options.traceFunctionCalls) || false)
+    return self.readyContracts[proxyContractName].originalNew((options && options.traceFunctionCalls) || false)
     .then(function(proxyContract) {
       if (proxyContract.address) {
         var proxyContractMock = contract.at(proxyContract.address);
@@ -275,8 +280,8 @@ Workbench.prototype.startTesting = function(contracts, cb) {
   this.readyContracts = this.compile(contracts, dir);
   Object.keys(this.readyContracts).forEach(contractName => {
     var contract = this.readyContracts[contractName];
-    setupMockOnContract.bind(this)(contract);
     makeCallsSync.bind(this)(contract);
+    setupMockOnContract.bind(this)(contract);
   });
 
   var name = '[' + contracts.join(', ') + '] Contracts Testing';
