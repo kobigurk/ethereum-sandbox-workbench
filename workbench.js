@@ -15,6 +15,7 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+var crypto = require('crypto');
 var Module = require('module');
 var vm = require('vm');
 if (typeof it !== 'undefined') {
@@ -144,9 +145,50 @@ var Workbench = function(options) {
   configureState(options, this.ethereumJsonPath);
 };
 
+function copyContractsWithCode(output, compiled) {
+  Object.keys(compiled.contracts).forEach(contractName => {
+    if (compiled.contracts[contractName].assembly) {
+      output.contracts[contractName] = compiled.contracts[contractName];
+      output.sources[contractName] = compiled.sources[contractName];
+    }
+  });
+  return output;
+}
+function compileWithCache(dir, contracts) {
+  var cacheDir = '.contract_cache';
+  if (!fs.existsSync(cacheDir)) {
+    fs.mkdirSync(cacheDir);
+  }
+  var compiled = {contracts: [], sources: []};
+  contracts.forEach(function(contract) {
+    var contractContent = fs.readFileSync(dir + '/' + contract);
+    var md5 = crypto.createHash('md5').update(contractContent).digest('hex');
+    var cachePath = cacheDir + '/' + contract;
+    var compileIt = function() {
+      var output = helper.compile(dir, [contract]); 
+      fs.writeFileSync(cachePath, JSON.stringify({
+        output: output,
+        hash: md5
+      }));
+      copyContractsWithCode(compiled, output);
+    };
+    if (!fs.existsSync(cachePath)) {
+      compileIt();
+      return;
+    }
+    var cacheContent = JSON.parse(fs.readFileSync(cachePath));
+    if (cacheContent.hash !== md5) {
+      compileIt();
+      return;
+    } else {
+      copyContractsWithCode(compiled, cacheContent.output);
+    }
+  });
+  return compiled;
+}
 Workbench.prototype.compile = function(contracts, dir, cb) {
-  var output = helper.compile(dir, contracts);
-  var proxyOutput = helper.compile(__dirname, [proxyContractName + '.sol']);
+  var output = compileWithCache(dir, contracts);
+  var proxyOutput = compileWithCache(__dirname, [proxyContractName + '.sol']);
   Object.assign(output.contracts, proxyOutput.contracts);
   Object.assign(output.sources, proxyOutput.sources);
   var ready = {};
@@ -208,7 +250,7 @@ function makeCallsSync(contract) {
       return contractToPatch;
     });
   };
-};
+}
 
 function setupMockOnContract(contract) {
   var self = this;
@@ -225,9 +267,9 @@ function setupMockOnContract(contract) {
               var promise;
               if (onArgs) {
                 var encodedInput = coder.encodeParams(obj.inputs.map(x => x.type), onArgs);
-                promise = proxyContract.setMockWithArgs('0x' + func.signature() + encodedInput, 2, '0x0', '0x' + encoded, {gas: 500000})
+                promise = proxyContract.setMockWithArgs('0x' + func.signature() + encodedInput, 2, '0x0', '0x' + encoded, {gas: 500000});
               } else {
-                promise = proxyContract.setMock('0x' + func.signature(), 2, '0x0', '0x' + encoded, {gas: 500000})
+                promise = proxyContract.setMock('0x' + func.signature(), 2, '0x0', '0x' + encoded, {gas: 500000});
               }
               return promise
               .then(function(txHash) {
@@ -251,9 +293,9 @@ function setupMockOnContract(contract) {
               var promise;
               if (onArgs) {
                 var encodedInput = coder.encodeParams(obj.inputs.map(x => x.type), onArgs);
-                promise = proxyContract.setMockWithArgs('0x' + func.signature() + encodedInput, 1, address, data, {gas: 500000})
+                promise = proxyContract.setMockWithArgs('0x' + func.signature() + encodedInput, 1, address, data, {gas: 500000});
               } else {
-                promise = proxyContract.setMock('0x' + func.signature(), 1, address, data, {gas: 500000})
+                promise = proxyContract.setMock('0x' + func.signature(), 1, address, data, {gas: 500000});
               }
 
               return promise
@@ -288,7 +330,7 @@ function setupMockOnContract(contract) {
       }
     });
   };
-};
+}
 
 Workbench.prototype.startTesting = function(contracts, cb) {
   var self = this;
@@ -321,7 +363,8 @@ Workbench.prototype.startTesting = function(contracts, cb) {
 Workbench.prototype.waitForReceipt = function (txHash) {
   var self = this;
   return new Promise((resolve, reject) => {
-    helper.waitForReceipt(self.sandbox.web3, txHash, function (err, receipt) {
+    var called = false;
+    function cb(err, receipt) {
       if (err) return reject(err);
       receipt.logs.forEach(eventLog => {
         for (var key in self.readyContracts) {
@@ -330,6 +373,22 @@ Workbench.prototype.waitForReceipt = function (txHash) {
         }
       });
       return resolve(receipt);
+    }
+    var web3 = self.sandbox.web3;
+    web3.eth.getTransactionReceipt(txHash, function(err, receipt) {
+      if (receipt) return cb(null, receipt);
+      var blockFilter = web3.eth.filter('latest');
+      blockFilter.watch(function() {
+        web3.eth.getTransactionReceipt(txHash, function(err, receipt) {
+          if (err) return cb(err);
+          if (receipt) {
+            if (called) return; // protection against double calling
+            called = true;
+            blockFilter.stopWatching();
+            cb(null, receipt);
+          }
+        });
+      });
     });
   });
 };
@@ -337,9 +396,26 @@ Workbench.prototype.waitForReceipt = function (txHash) {
 Workbench.prototype.waitForSandboxReceipt = function (txHash) {
   var self = this;
   return new Promise((resolve, reject) => {
-    helper.waitForSandboxReceipt(self.sandbox.web3, txHash, function (err, receipt) {
+    var called = false;
+    function cb(err, receipt) {
       if (err) return reject(err);
       return resolve(receipt);
+    }
+    var web3 = self.sandbox.web3;
+    web3.sandbox.receipt(txHash, function(err, receipt) {
+      if (receipt) return cb(null, receipt);
+      var blockFilter = web3.eth.filter('latest');
+      blockFilter.watch(function() {
+        web3.sandbox.receipt(txHash, function(err, receipt) {
+          if (err) return cb(err);
+          if (receipt) {
+            if (called) return; // protection against double calling
+            called = true;
+            blockFilter.stopWatching();
+            cb(null, receipt);
+          }
+        });
+      });
     });
   });
 };
