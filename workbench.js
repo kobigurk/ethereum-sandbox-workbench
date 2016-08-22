@@ -108,11 +108,14 @@ function configureState(options, ethereumJsonPath) {
     fs.writeFileSync(ethereumJsonPath, JSON.stringify(state));
   }
 
+  var defaultAccount = '0xcd2a3d9f938e13cd947ec05abc7fe734df8dd826';
+  var miner = '0xa413a58a1a925001ad2a50b35f2cd337752f84ff';
+  if (options.defaults && options.defaults.from) defaultAccount = options.defaults.from;
+  else this.defaults.from = defaultAccount;
+
   if (!fs.existsSync(ethereumJsonPath)) {
-    var defaultAccount = '0xcd2a3d9f938e13cd947ec05abc7fe734df8dd826';
-    var miner = '0xa413a58a1a925001ad2a50b35f2cd337752f84ff';                                                                                                                       
-    if (options.defaults && options.defaults.from) defaultAccount = options.defaults.from;                                                                                          
     if (options.defaults && options.defaults.miner) miner = options.defaults.miner;
+
     state = {
       contracts: 'contracts',
       env: {
@@ -140,11 +143,11 @@ var Workbench = function(options) {
   this.sandbox = new Sandbox('http://localhost:8554');
   this.readyContracts = {};
   if (!options) options = {};
-  this.defaults = options.defaults;
+  this.defaults = options.defaults || {};
   this.contractsDirectory = options.contratcsDirectory;
   this.ethereumJsonPath = path.dirname(callsite()[1].getFileName()) + '/ethereum.json';
   if (options.ethereumJsonPath) this.ethereumJsonPath = options.ethereumJsonPath;
-  configureState(options, this.ethereumJsonPath);
+  configureState.bind(this)(options, this.ethereumJsonPath);
 };
 
 function copyContractsWithCode(output, compiled) {
@@ -438,6 +441,59 @@ Workbench.prototype.call = function (options) {
     return self.sandbox.web3.eth.call(options, function (err, result) {
       if (err) return reject(err);
       return resolve(result);
+    });
+  });
+};
+
+Workbench.prototype.stopMiner = function () {
+  var self = this;
+  var web3 = self.sandbox.web3;
+  return new Promise((resolve, reject) => {
+    return web3.sandbox.stopMiner(function (err) {
+      if (err) return reject(err);
+      return resolve(true);
+    });
+  });
+};
+
+Workbench.prototype.startMiner = function () {
+  var self = this;
+  var web3 = self.sandbox.web3;
+  return new Promise((resolve, reject) => {
+    return web3.sandbox.startMiner(function (err) {
+      if (err) return reject(err);
+      return resolve(true);
+    });
+  });
+};
+
+Workbench.prototype.mine = function (numBlocks) {
+  var self = this;
+  var web3 = self.sandbox.web3;
+  return new Promise((resolve, reject) => {
+    return web3.sandbox.mine(numBlocks, function (err) {
+      if (err) return reject(err);
+      return resolve(true);
+    });
+  });
+};
+
+Workbench.prototype.setTimestamp = function (timestamp) {
+  var self = this;
+  var web3 = self.sandbox.web3;
+  return new Promise((resolve, reject) => {
+    var toSet;
+    if (typeof timestamp == 'string') {
+      toSet = Date.parse(timestamp);
+    } else if (typeof timestamp == 'number') {
+      toSet = timestamp;
+    } else if (typeof timestamp == 'object' && timestamp.getTime) {
+      toSet = timestamp.getTime();
+    }
+    toSet = toSet / 1000;
+    return web3.sandbox.setTimestamp(toSet, function (err) {
+      if (err) return reject(err);
+      return resolve(true);
     });
   });
 };
