@@ -110,12 +110,14 @@ function configureState(options, ethereumJsonPath) {
 
   if (!fs.existsSync(ethereumJsonPath)) {
     var defaultAccount = '0xcd2a3d9f938e13cd947ec05abc7fe734df8dd826';
-    if (options.defaults && options.defaults.from) defaultAccount = options.defaults.from;
+    var miner = '0xa413a58a1a925001ad2a50b35f2cd337752f84ff';                                                                                                                       
+    if (options.defaults && options.defaults.from) defaultAccount = options.defaults.from;                                                                                          
+    if (options.defaults && options.defaults.miner) miner = options.defaults.miner;
     state = {
       contracts: 'contracts',
       env: {
         block: {
-          coinbase: defaultAccount,
+          coinbase: miner,
           difficulty: '0x0100',
           gasLimit: 314159200,
           gasPrice: 600000000
