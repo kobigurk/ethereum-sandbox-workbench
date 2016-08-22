@@ -490,7 +490,7 @@ Workbench.prototype.setTimestamp = function (timestamp) {
     } else if (typeof timestamp == 'object' && timestamp.getTime) {
       toSet = timestamp.getTime();
     }
-    toSet = toSet / 1000;
+    toSet = parseInt(toSet / 1000);
     return web3.sandbox.setTimestamp(toSet, function (err) {
       if (err) return reject(err);
       return resolve(true);
