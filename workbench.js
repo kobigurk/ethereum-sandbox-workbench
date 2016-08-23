@@ -101,11 +101,7 @@ var proxyContractName = 'Proxy';
 function configureState(options, ethereumJsonPath) {
   var state;
   if (options.initialState) {
-    state = {
-      contracts: 'contracts',
-      env: options.initialState
-    };
-    fs.writeFileSync(ethereumJsonPath, JSON.stringify(state));
+    fs.writeFileSync(ethereumJsonPath, JSON.stringify(options.initialState));
   }
 
   var defaultAccount = '0xcd2a3d9f938e13cd947ec05abc7fe734df8dd826';
@@ -117,7 +113,7 @@ function configureState(options, ethereumJsonPath) {
     if (options.defaults && options.defaults.miner) miner = options.defaults.miner;
 
     state = {
-      contracts: 'contracts',
+      contracts: './contract',
       env: {
         block: {
           coinbase: miner,
@@ -144,10 +140,11 @@ var Workbench = function(options) {
   this.readyContracts = {};
   if (!options) options = {};
   this.defaults = options.defaults || {};
-  this.contractsDirectory = options.contratcsDirectory;
   this.ethereumJsonPath = path.dirname(callsite()[1].getFileName()) + '/ethereum.json';
   if (options.ethereumJsonPath) this.ethereumJsonPath = options.ethereumJsonPath;
   configureState.bind(this)(options, this.ethereumJsonPath);
+  this.state = JSON.parse(fs.readFileSync(this.ethereumJsonPath));
+  this.contractsDirectory = options.contractsDirectory || this.state.contracts;
 };
 
 function copyContractsWithCode(output, compiled) {
@@ -343,7 +340,6 @@ Workbench.prototype.startTesting = function(contracts, cb) {
   if (typeof contracts === 'string') contracts = [contracts];
   contracts = contracts.map(x => x + '.sol');
   var dir = this.contractsDirectory;
-  if (!dir) dir = './contract';
 
   this.readyContracts = this.compile(contracts, dir);
   Object.keys(this.readyContracts).forEach(contractName => {
