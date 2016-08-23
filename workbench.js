@@ -494,4 +494,12 @@ Workbench.prototype.setTimestamp = function (timestamp) {
   });
 };
 
+Workbench.prototype.rollTimeTo = function (timestamp) {
+  var self = this;
+  return self.setTimestamp(timestamp)
+  .then(function() {
+    return self.mine(1);
+  });
+};
+
 module.exports = Workbench;
