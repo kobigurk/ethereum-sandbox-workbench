@@ -15,6 +15,7 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+var crypto = require('crypto');
 var Module = require('module');
 var vm = require('vm');
 if (typeof it !== 'undefined') {
@@ -100,21 +101,22 @@ var proxyContractName = 'Proxy';
 function configureState(options, ethereumJsonPath) {
   var state;
   if (options.initialState) {
-    state = {
-      contracts: 'contracts',
-      env: options.initialState
-    };
-    fs.writeFileSync(ethereumJsonPath, JSON.stringify(state));
+    fs.writeFileSync(ethereumJsonPath, JSON.stringify(options.initialState));
   }
 
+  var defaultAccount = '0xcd2a3d9f938e13cd947ec05abc7fe734df8dd826';
+  var miner = '0xa413a58a1a925001ad2a50b35f2cd337752f84ff';
+  if (options.defaults && options.defaults.from) defaultAccount = options.defaults.from;
+  else this.defaults.from = defaultAccount;
+
   if (!fs.existsSync(ethereumJsonPath)) {
-    var defaultAccount = '0xcd2a3d9f938e13cd947ec05abc7fe734df8dd826';
-    if (options.defaults && options.defaults.from) defaultAccount = options.defaults.from;
+    if (options.defaults && options.defaults.miner) miner = options.defaults.miner;
+
     state = {
-      contracts: 'contracts',
+      contracts: './contract',
       env: {
         block: {
-          coinbase: defaultAccount,
+          coinbase: miner,
           difficulty: '0x0100',
           gasLimit: 314159200,
           gasPrice: 600000000
@@ -137,16 +139,58 @@ var Workbench = function(options) {
   this.sandbox = new Sandbox('http://localhost:8554');
   this.readyContracts = {};
   if (!options) options = {};
-  this.defaults = options.defaults;
-  this.contractsDirectory = options.contratcsDirectory;
+  this.defaults = options.defaults || {};
   this.ethereumJsonPath = path.dirname(callsite()[1].getFileName()) + '/ethereum.json';
   if (options.ethereumJsonPath) this.ethereumJsonPath = options.ethereumJsonPath;
-  configureState(options, this.ethereumJsonPath);
+  configureState.bind(this)(options, this.ethereumJsonPath);
+  this.state = JSON.parse(fs.readFileSync(this.ethereumJsonPath));
+  this.contractsDirectory = options.contractsDirectory || this.state.contracts;
 };
 
+function copyContractsWithCode(output, compiled) {
+  Object.keys(compiled.contracts).forEach(contractName => {
+    if (compiled.contracts[contractName].assembly) {
+      output.contracts[contractName] = compiled.contracts[contractName];
+      output.sources[contractName] = compiled.sources[contractName];
+    }
+  });
+  return output;
+}
+function compileWithCache(dir, contracts) {
+  var cacheDir = '.contract_cache';
+  if (!fs.existsSync(cacheDir)) {
+    fs.mkdirSync(cacheDir);
+  }
+  var compiled = {contracts: [], sources: []};
+  contracts.forEach(function(contract) {
+    var contractContent = fs.readFileSync(dir + '/' + contract);
+    var md5 = crypto.createHash('md5').update(contractContent).digest('hex');
+    var cachePath = cacheDir + '/' + contract;
+    var compileIt = function() {
+      var output = helper.compile(dir, [contract]); 
+      fs.writeFileSync(cachePath, JSON.stringify({
+        output: output,
+        hash: md5
+      }));
+      copyContractsWithCode(compiled, output);
+    };
+    if (!fs.existsSync(cachePath)) {
+      compileIt();
+      return;
+    }
+    var cacheContent = JSON.parse(fs.readFileSync(cachePath));
+    if (cacheContent.hash !== md5) {
+      compileIt();
+      return;
+    } else {
+      copyContractsWithCode(compiled, cacheContent.output);
+    }
+  });
+  return compiled;
+}
 Workbench.prototype.compile = function(contracts, dir, cb) {
-  var output = helper.compile(dir, contracts);
-  var proxyOutput = helper.compile(__dirname, [proxyContractName + '.sol']);
+  var output = compileWithCache(dir, contracts);
+  var proxyOutput = compileWithCache(__dirname, [proxyContractName + '.sol']);
   Object.assign(output.contracts, proxyOutput.contracts);
   Object.assign(output.sources, proxyOutput.sources);
   var ready = {};
@@ -208,7 +252,7 @@ function makeCallsSync(contract) {
       return contractToPatch;
     });
   };
-};
+}
 
 function setupMockOnContract(contract) {
   var self = this;
@@ -225,9 +269,9 @@ function setupMockOnContract(contract) {
               var promise;
               if (onArgs) {
                 var encodedInput = coder.encodeParams(obj.inputs.map(x => x.type), onArgs);
-                promise = proxyContract.setMockWithArgs('0x' + func.signature() + encodedInput, 2, '0x0', '0x' + encoded, {gas: 500000})
+                promise = proxyContract.setMockWithArgs('0x' + func.signature() + encodedInput, 2, '0x0', '0x' + encoded, {gas: 500000});
               } else {
-                promise = proxyContract.setMock('0x' + func.signature(), 2, '0x0', '0x' + encoded, {gas: 500000})
+                promise = proxyContract.setMock('0x' + func.signature(), 2, '0x0', '0x' + encoded, {gas: 500000});
               }
               return promise
               .then(function(txHash) {
@@ -251,9 +295,9 @@ function setupMockOnContract(contract) {
               var promise;
               if (onArgs) {
                 var encodedInput = coder.encodeParams(obj.inputs.map(x => x.type), onArgs);
-                promise = proxyContract.setMockWithArgs('0x' + func.signature() + encodedInput, 1, address, data, {gas: 500000})
+                promise = proxyContract.setMockWithArgs('0x' + func.signature() + encodedInput, 1, address, data, {gas: 500000});
               } else {
-                promise = proxyContract.setMock('0x' + func.signature(), 1, address, data, {gas: 500000})
+                promise = proxyContract.setMock('0x' + func.signature(), 1, address, data, {gas: 500000});
               }
 
               return promise
@@ -288,7 +332,7 @@ function setupMockOnContract(contract) {
       }
     });
   };
-};
+}
 
 Workbench.prototype.startTesting = function(contracts, cb) {
   var self = this;
@@ -296,7 +340,6 @@ Workbench.prototype.startTesting = function(contracts, cb) {
   if (typeof contracts === 'string') contracts = [contracts];
   contracts = contracts.map(x => x + '.sol');
   var dir = this.contractsDirectory;
-  if (!dir) dir = './contract';
 
   this.readyContracts = this.compile(contracts, dir);
   Object.keys(this.readyContracts).forEach(contractName => {
@@ -321,7 +364,8 @@ Workbench.prototype.startTesting = function(contracts, cb) {
 Workbench.prototype.waitForReceipt = function (txHash) {
   var self = this;
   return new Promise((resolve, reject) => {
-    helper.waitForReceipt(self.sandbox.web3, txHash, function (err, receipt) {
+    var called = false;
+    function cb(err, receipt) {
       if (err) return reject(err);
       receipt.logs.forEach(eventLog => {
         for (var key in self.readyContracts) {
@@ -330,6 +374,22 @@ Workbench.prototype.waitForReceipt = function (txHash) {
         }
       });
       return resolve(receipt);
+    }
+    var web3 = self.sandbox.web3;
+    web3.eth.getTransactionReceipt(txHash, function(err, receipt) {
+      if (receipt) return cb(null, receipt);
+      var blockFilter = web3.eth.filter('latest');
+      blockFilter.watch(function() {
+        web3.eth.getTransactionReceipt(txHash, function(err, receipt) {
+          if (err) return cb(err);
+          if (receipt) {
+            if (called) return; // protection against double calling
+            called = true;
+            blockFilter.stopWatching();
+            cb(null, receipt);
+          }
+        });
+      });
     });
   });
 };
@@ -337,9 +397,26 @@ Workbench.prototype.waitForReceipt = function (txHash) {
 Workbench.prototype.waitForSandboxReceipt = function (txHash) {
   var self = this;
   return new Promise((resolve, reject) => {
-    helper.waitForSandboxReceipt(self.sandbox.web3, txHash, function (err, receipt) {
+    var called = false;
+    function cb(err, receipt) {
       if (err) return reject(err);
       return resolve(receipt);
+    }
+    var web3 = self.sandbox.web3;
+    web3.sandbox.receipt(txHash, function(err, receipt) {
+      if (receipt) return cb(null, receipt);
+      var blockFilter = web3.eth.filter('latest');
+      blockFilter.watch(function() {
+        web3.sandbox.receipt(txHash, function(err, receipt) {
+          if (err) return cb(err);
+          if (receipt) {
+            if (called) return; // protection against double calling
+            called = true;
+            blockFilter.stopWatching();
+            cb(null, receipt);
+          }
+        });
+      });
     });
   });
 };
@@ -361,6 +438,67 @@ Workbench.prototype.call = function (options) {
       if (err) return reject(err);
       return resolve(result);
     });
+  });
+};
+
+Workbench.prototype.stopMiner = function () {
+  var self = this;
+  var web3 = self.sandbox.web3;
+  return new Promise((resolve, reject) => {
+    return web3.sandbox.stopMiner(function (err) {
+      if (err) return reject(err);
+      return resolve(true);
+    });
+  });
+};
+
+Workbench.prototype.startMiner = function () {
+  var self = this;
+  var web3 = self.sandbox.web3;
+  return new Promise((resolve, reject) => {
+    return web3.sandbox.startMiner(function (err) {
+      if (err) return reject(err);
+      return resolve(true);
+    });
+  });
+};
+
+Workbench.prototype.mine = function (numBlocks) {
+  var self = this;
+  var web3 = self.sandbox.web3;
+  return new Promise((resolve, reject) => {
+    return web3.sandbox.mine(numBlocks, function (err) {
+      if (err) return reject(err);
+      return resolve(true);
+    });
+  });
+};
+
+Workbench.prototype.setTimestamp = function (timestamp) {
+  var self = this;
+  var web3 = self.sandbox.web3;
+  return new Promise((resolve, reject) => {
+    var toSet;
+    if (typeof timestamp == 'string') {
+      toSet = Date.parse(timestamp);
+    } else if (typeof timestamp == 'number') {
+      toSet = timestamp;
+    } else if (typeof timestamp == 'object' && timestamp.getTime) {
+      toSet = timestamp.getTime();
+    }
+    toSet = parseInt(toSet / 1000);
+    return web3.sandbox.setTimestamp(toSet, function (err) {
+      if (err) return reject(err);
+      return resolve(true);
+    });
+  });
+};
+
+Workbench.prototype.rollTimeTo = function (timestamp) {
+  var self = this;
+  return self.setTimestamp(timestamp)
+  .then(function() {
+    return self.mine(1);
   });
 };
 
