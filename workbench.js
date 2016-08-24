@@ -162,6 +162,8 @@ function compileWithCache(dir, contracts) {
     fs.mkdirSync(cacheDir);
   }
   var compiled = {contracts: [], sources: []};
+  var recompiled = {contracts: [], sources: []};
+
   contracts.forEach(function(contract) {
     var contractContent = fs.readFileSync(dir + '/' + contract);
     var md5 = crypto.createHash('md5').update(contractContent).digest('hex');
@@ -172,7 +174,7 @@ function compileWithCache(dir, contracts) {
         output: output,
         hash: md5
       }));
-      copyContractsWithCode(compiled, output);
+      copyContractsWithCode(recompiled, output);
     };
     if (!fs.existsSync(cachePath)) {
       compileIt();
@@ -186,6 +188,7 @@ function compileWithCache(dir, contracts) {
       copyContractsWithCode(compiled, cacheContent.output);
     }
   });
+  copyContractsWithCode(compiled, recompiled);
   return compiled;
 }
 Workbench.prototype.compile = function(contracts, dir, cb) {
