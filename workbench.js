@@ -147,35 +147,43 @@ var Workbench = function(options) {
   this.contractsDirectory = options.contractsDirectory || this.state.contracts;
 };
 
-function copyContractsWithCode(output, compiled) {
-  Object.keys(compiled.contracts).forEach(contractName => {
-    if (compiled.contracts[contractName].assembly) {
-      output.contracts[contractName] = compiled.contracts[contractName];
-      output.sources[contractName] = compiled.sources[contractName];
-    }
-  });
-  return output;
-}
+
 function compileWithCache(dir, contracts) {
   var cacheDir = '.contract_cache';
   if (!fs.existsSync(cacheDir)) {
     fs.mkdirSync(cacheDir);
   }
   var compiled = {contracts: [], sources: []};
-  var recompiled = {contracts: [], sources: []};
 
   contracts.forEach(function(contract) {
     var contractContent = fs.readFileSync(dir + '/' + contract);
     var md5 = crypto.createHash('md5').update(contractContent).digest('hex');
     var cachePath = cacheDir + '/' + contract;
+
+    var copyContractsWithCode = function(output, compiled, timestamp) {
+      Object.keys(compiled.contracts).forEach(contractName => {
+        if (compiled.contracts[contractName].assembly) {
+          if (output.contracts[contractName] && output.contracts[contractName].timestamp > timestamp) return;
+          output.contracts[contractName] = compiled.contracts[contractName];
+          output.contracts[contractName].timestamp = timestamp;
+          output.sources[contractName] = compiled.sources[contractName];
+        }
+      });
+      return output;
+    };
+
     var compileIt = function() {
       var output = helper.compile(dir, [contract]); 
-      fs.writeFileSync(cachePath, JSON.stringify({
+      var timestamp = Date.now();
+      var saveObj = {
         output: output,
-        hash: md5
-      }));
-      copyContractsWithCode(recompiled, output);
+        hash: md5,
+        timestamp: timestamp
+      };
+      fs.writeFileSync(cachePath, JSON.stringify(saveObj));
+      copyContractsWithCode(compiled, output, timestamp);
     };
+
     if (!fs.existsSync(cachePath)) {
       compileIt();
       return;
@@ -185,10 +193,9 @@ function compileWithCache(dir, contracts) {
       compileIt();
       return;
     } else {
-      copyContractsWithCode(compiled, cacheContent.output);
+      copyContractsWithCode(compiled, cacheContent.output, cacheContent.timestamp || 0);
     }
   });
-  copyContractsWithCode(compiled, recompiled);
   return compiled;
 }
 Workbench.prototype.compile = function(contracts, dir, cb) {
