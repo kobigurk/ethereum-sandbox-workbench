@@ -1,6 +1,6 @@
 {
   "name": "ethereum-sandbox-workbench",
-  "version": "1.0.0-beta5",
+  "version": "1.0.0-beta6",
   "description": "",
   "main": "workbench.js",
   "scripts": {
