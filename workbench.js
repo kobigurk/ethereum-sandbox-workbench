@@ -152,28 +152,28 @@ var Workbench = function(options) {
 };
 
 function getDependencies(files, dir) {
-	var dependencies = [];
+  var dependencies = [];
 
-	getDeps(files);
-	return dependencies;
+  getDeps(files);
+  return dependencies;
 
-	function getDeps(files) {
-		files.forEach(function(file) {
-			if (_.startsWith(file, './')) file = file.substr(2);
-			if (_.includes(dependencies, file)) return;
+  function getDeps(files) {
+    files.forEach(function(file) {
+      if (_.startsWith(file, './')) file = file.substr(2);
+      if (_.includes(dependencies, file)) return;
 
-			dependencies.push(file);
+      dependencies.push(file);
 
-			var content = fs.readFileSync(dir + '/' + file);
-			var rx = /^(?:\s*import\s*")([^"]*)"/gm,
-					match,
-					deps = [];
-			while ((match = rx.exec(content)) !== null) {
-				deps.push(match[1]);
-			}
-			getDeps(deps);
-		});
-	}
+      var content = fs.readFileSync(dir + '/' + file);
+      var rx = /^(?:\s*import\s*")([^"]*)"/gm,
+          match,
+          deps = [];
+      while ((match = rx.exec(content)) !== null) {
+        deps.push(match[1]);
+      }
+      getDeps(deps);
+    });
+  }
 }
 
 function compileWithCache(dir, contractsWithoutDependencies) {
@@ -182,15 +182,14 @@ function compileWithCache(dir, contractsWithoutDependencies) {
     fs.mkdirSync(cacheDir);
   }
   var compiled = {contracts: [], sources: []};
-	var contracts = [];
-	function resolveContractDependencies(contractsToCheck) {
-		contractsToCheck.forEach(function(contract) {
-			contracts.push
-			var dependencies = getDependencies([contract], dir);
-			contracts = contracts.concat(dependencies);
-		});
-	}
-	resolveContractDependencies(contractsWithoutDependencies);
+  var contracts = [];
+  function resolveContractDependencies(contractsToCheck) {
+    contractsToCheck.forEach(function(contract) {
+      var dependencies = getDependencies([contract], dir);
+      contracts = contracts.concat(dependencies);
+    });
+  }
+  resolveContractDependencies(contractsWithoutDependencies);
 
   contracts.forEach(function(contract) {
     var contractContent = fs.readFileSync(dir + '/' + contract);
@@ -456,7 +455,7 @@ Workbench.prototype.waitForSandboxReceipt = function (txHash) {
     var called = false;
     function cb(err, receipt) {
       if (err) return reject(err);
-      checkForSandboxReceiptErrors(sandboxReceipt, txHash);
+      checkForSandboxReceiptErrors(receipt, txHash);
       return resolve(receipt);
     }
     var web3 = self.sandbox.web3;
