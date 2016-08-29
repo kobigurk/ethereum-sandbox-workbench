@@ -1,7 +1,7 @@
 /*
  * Ethereum Sandbox Helper
  * Copyright (C) 2016  <ether.camp> ALL RIGHTS RESERVED  (http://ether.camp)
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License version 3
  * as published by the Free Software Foundation.
@@ -18,6 +18,10 @@
 var crypto = require('crypto');
 var Module = require('module');
 var vm = require('vm');
+var async = require('async');
+var _ = require('lodash');
+var path = require('path');
+
 if (typeof it !== 'undefined') {
   var originalIt = it;
   var patchFunc = function(func) {
@@ -147,18 +151,52 @@ var Workbench = function(options) {
   this.contractsDirectory = options.contractsDirectory || this.state.contracts;
 };
 
+function getDependencies(files, dir) {
+	var dependencies = [];
 
-function compileWithCache(dir, contracts) {
+	getDeps(files);
+	return dependencies;
+
+	function getDeps(files) {
+		files.forEach(function(file) {
+			if (_.startsWith(file, './')) file = file.substr(2);
+			if (_.includes(dependencies, file)) return;
+
+			dependencies.push(file);
+
+			var content = fs.readFileSync(dir + '/' + file);
+			var rx = /^(?:\s*import\s*")([^"]*)"/gm,
+					match,
+					deps = [];
+			while ((match = rx.exec(content)) !== null) {
+				deps.push(match[1]);
+			}
+			getDeps(deps);
+		});
+	}
+}
+
+function compileWithCache(dir, contractsWithoutDependencies) {
   var cacheDir = '.contract_cache';
   if (!fs.existsSync(cacheDir)) {
     fs.mkdirSync(cacheDir);
   }
   var compiled = {contracts: [], sources: []};
+	var contracts = [];
+	function resolveContractDependencies(contractsToCheck) {
+		contractsToCheck.forEach(function(contract) {
+			contracts.push
+			var dependencies = getDependencies([contract], dir);
+			contracts = contracts.concat(dependencies);
+		});
+	}
+	resolveContractDependencies(contractsWithoutDependencies);
 
   contracts.forEach(function(contract) {
     var contractContent = fs.readFileSync(dir + '/' + contract);
+
     var md5 = crypto.createHash('md5').update(contractContent).digest('hex');
-    var cachePath = cacheDir + '/' + contract;
+    var cachePath = cacheDir + '/' + path.basename(contract);
 
     var copyContractsWithCode = function(output, compiled, timestamp) {
       Object.keys(compiled.contracts).forEach(contractName => {
@@ -173,7 +211,7 @@ function compileWithCache(dir, contracts) {
     };
 
     var compileIt = function() {
-      var output = helper.compile(dir, [contract]); 
+      var output = helper.compile(dir, [contract]);
       var timestamp = Date.now();
       var saveObj = {
         output: output,
@@ -198,6 +236,7 @@ function compileWithCache(dir, contracts) {
   });
   return compiled;
 }
+
 Workbench.prototype.compile = function(contracts, dir, cb) {
   var output = compileWithCache(dir, contracts);
   var proxyOutput = compileWithCache(__dirname, [proxyContractName + '.sol']);
@@ -250,7 +289,7 @@ function makeCallsSync(contract) {
           };
           var newFunc;
           if (obj.constant) {
-            newFunc = callFunc; 
+            newFunc = callFunc;
             Object.assign(newFunc, contractToPatch[obj.name]);
           } else {
             newFunc = contractToPatch[obj.name];
