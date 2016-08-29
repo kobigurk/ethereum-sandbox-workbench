@@ -1,7 +1,7 @@
 /*
  * Ethereum Sandbox Helper
  * Copyright (C) 2016  <ether.camp> ALL RIGHTS RESERVED  (http://ether.camp)
- * 
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License version 3
  * as published by the Free Software Foundation.
@@ -18,6 +18,10 @@
 var crypto = require('crypto');
 var Module = require('module');
 var vm = require('vm');
+var async = require('async');
+var _ = require('lodash');
+var path = require('path');
+
 if (typeof it !== 'undefined') {
   var originalIt = it;
   var patchFunc = function(func) {
@@ -147,33 +151,76 @@ var Workbench = function(options) {
   this.contractsDirectory = options.contractsDirectory || this.state.contracts;
 };
 
-function copyContractsWithCode(output, compiled) {
-  Object.keys(compiled.contracts).forEach(contractName => {
-    if (compiled.contracts[contractName].assembly) {
-      output.contracts[contractName] = compiled.contracts[contractName];
-      output.sources[contractName] = compiled.sources[contractName];
-    }
-  });
-  return output;
+function getDependencies(files, dir) {
+  var dependencies = [];
+
+  getDeps(files);
+  return dependencies;
+
+  function getDeps(files) {
+    files.forEach(function(file) {
+      if (_.startsWith(file, './')) file = file.substr(2);
+      if (_.includes(dependencies, file)) return;
+
+      dependencies.push(file);
+
+      var content = fs.readFileSync(dir + '/' + file);
+      var rx = /^(?:\s*import\s*")([^"]*)"/gm,
+          match,
+          deps = [];
+      while ((match = rx.exec(content)) !== null) {
+        deps.push(match[1]);
+      }
+      getDeps(deps);
+    });
+  }
 }
-function compileWithCache(dir, contracts) {
+
+function compileWithCache(dir, contractsWithoutDependencies) {
   var cacheDir = '.contract_cache';
   if (!fs.existsSync(cacheDir)) {
     fs.mkdirSync(cacheDir);
   }
   var compiled = {contracts: [], sources: []};
+  var contracts = [];
+  function resolveContractDependencies(contractsToCheck) {
+    contractsToCheck.forEach(function(contract) {
+      var dependencies = getDependencies([contract], dir);
+      contracts = contracts.concat(dependencies);
+    });
+  }
+  resolveContractDependencies(contractsWithoutDependencies);
+
   contracts.forEach(function(contract) {
     var contractContent = fs.readFileSync(dir + '/' + contract);
+
     var md5 = crypto.createHash('md5').update(contractContent).digest('hex');
-    var cachePath = cacheDir + '/' + contract;
-    var compileIt = function() {
-      var output = helper.compile(dir, [contract]); 
-      fs.writeFileSync(cachePath, JSON.stringify({
-        output: output,
-        hash: md5
-      }));
-      copyContractsWithCode(compiled, output);
+    var cachePath = cacheDir + '/' + path.basename(contract);
+
+    var copyContractsWithCode = function(output, compiled, timestamp) {
+      Object.keys(compiled.contracts).forEach(contractName => {
+        if (compiled.contracts[contractName].assembly) {
+          if (output.contracts[contractName] && output.contracts[contractName].timestamp > timestamp) return;
+          output.contracts[contractName] = compiled.contracts[contractName];
+          output.contracts[contractName].timestamp = timestamp;
+          output.sources[contractName] = compiled.sources[contractName];
+        }
+      });
+      return output;
     };
+
+    var compileIt = function() {
+      var output = helper.compile(dir, [contract]);
+      var timestamp = Date.now();
+      var saveObj = {
+        output: output,
+        hash: md5,
+        timestamp: timestamp
+      };
+      fs.writeFileSync(cachePath, JSON.stringify(saveObj));
+      copyContractsWithCode(compiled, output, timestamp);
+    };
+
     if (!fs.existsSync(cachePath)) {
       compileIt();
       return;
@@ -183,11 +230,12 @@ function compileWithCache(dir, contracts) {
       compileIt();
       return;
     } else {
-      copyContractsWithCode(compiled, cacheContent.output);
+      copyContractsWithCode(compiled, cacheContent.output, cacheContent.timestamp || 0);
     }
   });
   return compiled;
 }
+
 Workbench.prototype.compile = function(contracts, dir, cb) {
   var output = compileWithCache(dir, contracts);
   var proxyOutput = compileWithCache(__dirname, [proxyContractName + '.sol']);
@@ -240,7 +288,7 @@ function makeCallsSync(contract) {
           };
           var newFunc;
           if (obj.constant) {
-            newFunc = callFunc; 
+            newFunc = callFunc;
             Object.assign(newFunc, contractToPatch[obj.name]);
           } else {
             newFunc = contractToPatch[obj.name];
@@ -367,13 +415,17 @@ Workbench.prototype.waitForReceipt = function (txHash) {
     var called = false;
     function cb(err, receipt) {
       if (err) return reject(err);
-      receipt.logs.forEach(eventLog => {
-        for (var key in self.readyContracts) {
-          eventLog.parsed = helper.parseEventLog(self.readyContracts[key].abi, eventLog);
-          if (eventLog.parsed) break;
-        }
+      self.sandbox.web3.sandbox.receipt(txHash, function(err, sandboxReceipt) {
+        if (err) return reject(err);
+        checkForSandboxReceiptErrors(sandboxReceipt, txHash);
+        receipt.logs.forEach(eventLog => {
+          for (var key in self.readyContracts) {
+            eventLog.parsed = helper.parseEventLog(self.readyContracts[key].abi, eventLog);
+            if (eventLog.parsed) break;
+          }
+        });
+        return resolve(receipt);
       });
-      return resolve(receipt);
     }
     var web3 = self.sandbox.web3;
     web3.eth.getTransactionReceipt(txHash, function(err, receipt) {
@@ -394,12 +446,16 @@ Workbench.prototype.waitForReceipt = function (txHash) {
   });
 };
 
+function checkForSandboxReceiptErrors(receipt, txHash) {
+  if (receipt.exception === 'out of gas') console.log('Out of gas: tx ' + txHash);
+}
 Workbench.prototype.waitForSandboxReceipt = function (txHash) {
   var self = this;
   return new Promise((resolve, reject) => {
     var called = false;
     function cb(err, receipt) {
       if (err) return reject(err);
+      checkForSandboxReceiptErrors(receipt, txHash);
       return resolve(receipt);
     }
     var web3 = self.sandbox.web3;
