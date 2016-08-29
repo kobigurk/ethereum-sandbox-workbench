@@ -377,13 +377,17 @@ Workbench.prototype.waitForReceipt = function (txHash) {
     var called = false;
     function cb(err, receipt) {
       if (err) return reject(err);
-      receipt.logs.forEach(eventLog => {
-        for (var key in self.readyContracts) {
-          eventLog.parsed = helper.parseEventLog(self.readyContracts[key].abi, eventLog);
-          if (eventLog.parsed) break;
-        }
+      self.sandbox.web3.sandbox.receipt(txHash, function(err, sandboxReceipt) {
+        if (err) return reject(err);
+        checkForSandboxReceiptErrors(sandboxReceipt, txHash);
+        receipt.logs.forEach(eventLog => {
+          for (var key in self.readyContracts) {
+            eventLog.parsed = helper.parseEventLog(self.readyContracts[key].abi, eventLog);
+            if (eventLog.parsed) break;
+          }
+        });
+        return resolve(receipt);
       });
-      return resolve(receipt);
     }
     var web3 = self.sandbox.web3;
     web3.eth.getTransactionReceipt(txHash, function(err, receipt) {
@@ -404,12 +408,16 @@ Workbench.prototype.waitForReceipt = function (txHash) {
   });
 };
 
+function checkForSandboxReceiptErrors(receipt, txHash) {
+  if (receipt.exception === 'out of gas') console.log('Out of gas: tx ' + txHash);
+}
 Workbench.prototype.waitForSandboxReceipt = function (txHash) {
   var self = this;
   return new Promise((resolve, reject) => {
     var called = false;
     function cb(err, receipt) {
       if (err) return reject(err);
+      checkForSandboxReceiptErrors(sandboxReceipt, txHash);
       return resolve(receipt);
     }
     var web3 = self.sandbox.web3;
