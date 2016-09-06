@@ -295,6 +295,10 @@ function makeCallsSync(contract) {
           }
           newFunc.call = callFunc;
           contractToPatch[obj.name] = newFunc;
+
+          contractToPatch[obj.name].decodeReturn = function(returnValue) {
+            return coder.decodeParams(obj.outputs.map(x => x.type), returnValue.replace('0x', ''));
+          };
         }
       });
       return contractToPatch;
