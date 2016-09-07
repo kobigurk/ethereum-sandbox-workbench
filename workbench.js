@@ -295,6 +295,10 @@ function makeCallsSync(contract) {
           }
           newFunc.call = callFunc;
           contractToPatch[obj.name] = newFunc;
+
+          contractToPatch[obj.name].decodeReturn = function(returnValue) {
+            return coder.decodeParams(obj.outputs.map(x => x.type), returnValue.replace('0x', ''));
+          };
         }
       });
       return contractToPatch;
@@ -420,8 +424,10 @@ Workbench.prototype.waitForReceipt = function (txHash) {
         checkForSandboxReceiptErrors(sandboxReceipt, txHash);
         receipt.logs.forEach(eventLog => {
           for (var key in self.readyContracts) {
-            eventLog.parsed = helper.parseEventLog(self.readyContracts[key].abi, eventLog);
-            if (eventLog.parsed) break;
+            if (eventLog.topics.length > 0) {
+              eventLog.parsed = helper.parseEventLog(self.readyContracts[key].abi, eventLog);
+              if (eventLog.parsed) break;
+            }
           }
         });
         return resolve(receipt);
