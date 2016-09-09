@@ -21,6 +21,7 @@ var vm = require('vm');
 var async = require('async');
 var _ = require('lodash');
 var path = require('path');
+var https = require('https');
 
 if (typeof it !== 'undefined') {
   var originalIt = it;
@@ -149,6 +150,7 @@ var Workbench = function(options) {
   configureState.bind(this)(options, this.ethereumJsonPath);
   this.state = JSON.parse(fs.readFileSync(this.ethereumJsonPath));
   this.contractsDirectory = options.contractsDirectory || this.state.contracts;
+  this.solcVersion = options.solcVersion || 'latestStable';
 };
 
 function getDependencies(files, dir) {
@@ -176,7 +178,8 @@ function getDependencies(files, dir) {
   }
 }
 
-function compileWithCache(dir, contractsWithoutDependencies) {
+Workbench.prototype.compileWithCache = function(dir, contractsWithoutDependencies, printSolcVersion) {
+  var self = this;
   var cacheDir = '.contract_cache';
   if (!fs.existsSync(cacheDir)) {
     fs.mkdirSync(cacheDir);
@@ -190,6 +193,24 @@ function compileWithCache(dir, contractsWithoutDependencies) {
     });
   }
   resolveContractDependencies(contractsWithoutDependencies);
+
+  var isSolcCurrent = true;
+  var solcVersionCachePath = cacheDir + '/solc.cache';
+  var currentSolcVersion = self.specificSolc ? self.solcVersion : helper.getSolcVersion();
+  if (!fs.existsSync(solcVersionCachePath)) {
+    fs.writeFileSync(solcVersionCachePath, currentSolcVersion);
+    isSolcCurrent = false;
+  } else {
+    var cachedSolcVersion = fs.readFileSync(solcVersionCachePath).toString();
+    if (cachedSolcVersion !== currentSolcVersion) {
+      fs.writeFileSync(solcVersionCachePath, currentSolcVersion);
+      isSolcCurrent = false;
+    }
+  }
+
+  if (printSolcVersion) {
+    console.log('Using solc version: ' + currentSolcVersion);
+  }
 
   contracts.forEach(function(contract) {
     var contractContent = fs.readFileSync(dir + '/' + contract);
@@ -210,7 +231,7 @@ function compileWithCache(dir, contractsWithoutDependencies) {
     };
 
     var compileIt = function() {
-      var output = helper.compile(dir, [contract]);
+      var output = helper.compile(dir, [contract], self.specificSolc);
       var timestamp = Date.now();
       var saveObj = {
         output: output,
@@ -220,6 +241,11 @@ function compileWithCache(dir, contractsWithoutDependencies) {
       fs.writeFileSync(cachePath, JSON.stringify(saveObj));
       copyContractsWithCode(compiled, output, timestamp);
     };
+
+    if (!isSolcCurrent) {
+      compileIt();
+      return;
+    }
 
     if (!fs.existsSync(cachePath)) {
       compileIt();
@@ -234,11 +260,11 @@ function compileWithCache(dir, contractsWithoutDependencies) {
     }
   });
   return compiled;
-}
+};
 
 Workbench.prototype.compile = function(contracts, dir, cb) {
-  var output = compileWithCache(dir, contracts);
-  var proxyOutput = compileWithCache(__dirname, [proxyContractName + '.sol']);
+  var output = this.compileWithCache(dir, contracts, true);
+  var proxyOutput = this.compileWithCache(__dirname, [proxyContractName + '.sol']);
   Object.assign(output.contracts, proxyOutput.contracts);
   Object.assign(output.sources, proxyOutput.sources);
   var ready = {};
@@ -388,23 +414,68 @@ function setupMockOnContract(contract) {
 
 Workbench.prototype.startTesting = function(contracts, cb) {
   var self = this;
-
   if (typeof contracts === 'string') contracts = [contracts];
   contracts = contracts.map(x => x + '.sol');
-  var dir = this.contractsDirectory;
+  var setupTesting = (function() {
+    var dir = this.contractsDirectory;
 
-  this.readyContracts = this.compile(contracts, dir);
-  Object.keys(this.readyContracts).forEach(contractName => {
-    var contract = this.readyContracts[contractName];
-    makeCallsSync.bind(this)(contract);
-    setupMockOnContract.bind(this)(contract);
-  });
+    Object.assign(this.readyContracts, this.compile(contracts, dir));
+    Object.keys(this.readyContracts).forEach(contractName => {
+      var contract = this.readyContracts[contractName];
+      makeCallsSync.bind(this)(contract);
+      setupMockOnContract.bind(this)(contract);
+    });
+  }).bind(this);
 
   var name = '[' + contracts.join(', ') + '] Contracts Testing';
   describe(name, function() {
     this.timeout(60000);
     before(function(done) {
-      self.start(self.readyContracts, done);
+      var solcVersion = self.solcVersion;
+      if (solcVersion == 'latestStable') {
+        setupTesting();
+        self.start(self.readyContracts, done);
+      } else {
+        https.get('https://ethereum.github.io/solc-bin/bin/list.json', function(res) {
+          var body = '';
+          res.on('data', function(data) {
+            body += data;
+          });
+          res.on('end', function() {
+            try {
+              var solcJson = JSON.parse(body);
+              var solcVersionString;
+              if (solcJson.releases[solcVersion]) {
+                solcVersionString = solcJson.releases[solcVersion].replace('soljson-', '').replace('.js', '');
+              } else {
+                var builds = solcJson.builds.filter(function(obj) {
+                  return obj.path.indexOf(solcVersion) >= 0;
+                });
+                if (builds.length === 0) {
+                  done(new Error('Error setting up solc: could not find matching version ' + solcVersion));
+                  return;
+                } 
+                if (builds.length > 1) {
+                  done(new Error('Error setting up solc: multiple matching versions for ' + solcVersion + ': ' + builds.join(', ')));
+                  return;
+                } 
+                solcVersionString = solcVersion;
+              }
+              helper.getSpecificSolc(solcVersionString, function(err, specificSolc) {
+                if (err) {
+                  done(err);
+                  return;
+                }
+                self.specificSolc = specificSolc;
+                setupTesting();
+                self.start(self.readyContracts, done);
+              });
+            } catch(e) {
+              done(new Error('Error setting up solc: ' + e));
+            }
+          });
+        });
+      }
     });
     after(function(done) {
       self.stop(done);
