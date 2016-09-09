@@ -1,6 +1,6 @@
 {
   "name": "ethereum-sandbox-workbench",
-  "version": "1.0.0-beta7",
+  "version": "1.0.0-beta8",
   "description": "",
   "main": "workbench.js",
   "scripts": {
@@ -13,7 +13,7 @@
     "callsite": "^1.0.0",
     "ether-pudding": "^3.1.2",
     "ethereum-sandbox-client": "^1.0.1-beta2",
-    "ethereum-sandbox-helper": "^1.0.0-beta3",
+    "ethereum-sandbox-helper": "^1.0.0-beta4",
     "lodash": "^4.15.0",
     "mocha": "^3.0.0",
     "web3": "^0.17.0-alpha"
