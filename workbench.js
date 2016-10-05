@@ -286,6 +286,11 @@ Workbench.prototype.start = function(contracts, cb) {
     if (err) return cb(err);
     Object.keys(contracts).forEach(contractName => {
       contracts[contractName].setProvider(self.sandbox.web3.currentProvider);
+      // return result as per: https://github.com/ConsenSys/ether-pudding/issues/39
+      // code here based on https://github.com/ConsenSys/ether-pudding/blob/5a3f4023bb2b2816086193dce8015eb49193bd5e/classtemplate.js#L11
+      contracts[contractName].web3.currentProvider.send = function() {
+        return this.provider.send.apply(this.provider, arguments);
+      };
       if (self.defaults) contracts[contractName].defaults(self.defaults);
     });
     cb();
