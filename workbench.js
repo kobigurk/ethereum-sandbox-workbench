@@ -612,7 +612,7 @@ Workbench.prototype.mine = function (numBlocks) {
   });
 };
 
-Workbench.prototype.setTimestamp = function (timestamp) {
+Workbench.prototype.setTimestamp = function (timestamp, keepTimestampConstant) {
   var self = this;
   var web3 = self.sandbox.web3;
   return new Promise((resolve, reject) => {
@@ -625,16 +625,16 @@ Workbench.prototype.setTimestamp = function (timestamp) {
       toSet = timestamp.getTime();
     }
     toSet = parseInt(toSet / 1000);
-    return web3.sandbox.setTimestamp(toSet, function (err) {
+    return web3.sandbox.setTimestamp(toSet, keepTimestampConstant, function (err) {
       if (err) return reject(err);
       return resolve(true);
     });
   });
 };
 
-Workbench.prototype.rollTimeTo = function (timestamp) {
+Workbench.prototype.rollTimeTo = function (timestamp, movingTimestamp) {
   var self = this;
-  return self.setTimestamp(timestamp)
+  return self.setTimestamp(timestamp, !movingTimestamp)
   .then(function() {
     return self.mine(1);
   });
